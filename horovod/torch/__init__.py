@@ -34,11 +34,13 @@ from horovod.torch.mpi_ops import broadcast, broadcast_async, broadcast_, broadc
 from horovod.torch.mpi_ops import poll, synchronize
 
 import torch
+import numpy as np
 
 
 class _DistributedOptimizer(torch.optim.Optimizer):
-    def __init__(self, params, named_parameters=None):
+    def __init__(self, params, named_parameters=None, is_sparse=False):
         super(self.__class__, self).__init__(params)
+        self.is_sparse = is_sparse
 
         if named_parameters is not None:
             named_parameters = list(named_parameters)
@@ -59,6 +61,9 @@ class _DistributedOptimizer(torch.optim.Optimizer):
         if size() > 1:
             self._register_hooks()
 
+        if is_sparse:
+            self._init_sparse_space()
+
     def _register_hooks(self):
         for param_group in self.param_groups:
             for p in param_group['params']:
@@ -77,6 +82,28 @@ class _DistributedOptimizer(torch.optim.Optimizer):
             self._handles[p] = handle
         return hook
 
+    def _init_sparse_space(self):
+        def __new_storage(numel, num_workers):
+            num_elements_of_tensor = numel
+            storage = {}
+            nnzs_1d = np.zeros(num_workers, dtype=np.int32)
+            values_1d = np.zeros(num_elements_of_tensor * num_workers, dtype=np.float32)
+            indexes_1d = np.zeros(num_elements_of_tensor * num_workers, dtype=np.int32)
+            displ_1d =  np.zeros(num_workers, dtype=np.int32)
+            storage['nnzs_1d'] = nnzs_1d
+            storage['values_1d'] = values_1d
+            storage['indexes_1d'] = indexes_1d
+            storage['displ_1d'] = displ_1d
+            return storage
+        self._sparse_storage = {}
+        num_workers = size()
+        for param_group in self.param_groups:
+            for p in param_group['params']:
+                if p.requires_grad:
+                    name = self._parameter_names.get(p)
+                    numel = p.grad.numel()
+                    self._sparse_storage[name] = __new_storage(numel, num_workers)
+
     def synchronize(self):
         for handle in self._handles.values():
             synchronize(handle)
@@ -87,7 +114,7 @@ class _DistributedOptimizer(torch.optim.Optimizer):
         return super(self.__class__, self).step(closure)
 
 
-def DistributedOptimizer(optimizer, named_parameters=None):
+def DistributedOptimizer(optimizer, named_parameters=None, is_sparse=False):
     """
     An optimizer that wraps another torch.optim.Optimizer, using an allreduce to
     average gradient values before applying gradients to model weights.
@@ -119,7 +146,7 @@ def DistributedOptimizer(optimizer, named_parameters=None):
     # The goal is to override the `step()` method with an allreduce implementation.
     cls = type(optimizer.__class__.__name__, (optimizer.__class__,),
                dict(_DistributedOptimizer.__dict__))
-    return cls(optimizer.param_groups, named_parameters)
+    return cls(optimizer.param_groups, named_parameters, is_sparse)
 
 
 def broadcast_parameters(params, root_rank):
