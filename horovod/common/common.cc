@@ -14,15 +14,14 @@
 // =============================================================================
 
 #include <sstream>
-#include <assert.h>
+#include <cassert>
 
 #include "common.h"
 
 namespace horovod {
 namespace common {
 
-Status::Status() {
-}
+Status::Status() = default;
 
 Status::Status(StatusType type, std::string reason) {
   type_ = type;
@@ -43,6 +42,10 @@ Status Status::PreconditionError(std::string message) {
 
 Status Status::Aborted(std::string message) {
   return Status(StatusType::ABORTED, message);
+}
+
+Status Status::InvalidArgument(std::string message) {
+  return Status(StatusType::INVALID_ARGUMENT, message);
 }
 
 bool Status::ok() const {

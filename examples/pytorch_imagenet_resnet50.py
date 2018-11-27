@@ -22,6 +22,10 @@ parser.add_argument('--log-dir', default='./logs',
                     help='tensorboard log directory')
 parser.add_argument('--checkpoint-format', default='./checkpoint-{epoch}.pth.tar',
                     help='checkpoint file format')
+parser.add_argument('--fp16-allreduce', action='store_true', default=False,
+                    help='use fp16 compression during allreduce')
+
+# Default settings from https://arxiv.org/abs/1706.02677.
 parser.add_argument('--batch-size', type=int, default=32,
                     help='input batch size for training')
 parser.add_argument('--val-batch-size', type=int, default=32,
@@ -36,10 +40,12 @@ parser.add_argument('--momentum', type=float, default=0.9,
                     help='SGD momentum')
 parser.add_argument('--wd', type=float, default=0.00005,
                     help='weight decay')
+
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
 parser.add_argument('--seed', type=int, default=42,
                     help='random seed')
+
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -111,22 +117,29 @@ if args.cuda:
     # Move model to GPU.
     model.cuda()
 
-# Restore from a previous checkpoint, if initial_epoch is specified.
-# Horovod: restore on the first worker which will broadcast weights to other workers.
-if resume_from_epoch > 0 and hvd.rank() == 0:
-    checkpoint = torch.load(args.checkpoint_format.format(epoch=resume_from_epoch))
-    model.load_state_dict(checkpoint)
-
-# Horovod: broadcast parameters.
-hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-
 # Horovod: scale learning rate by the number of GPUs.
 optimizer = optim.SGD(model.parameters(), lr=args.base_lr * hvd.size(),
                       momentum=args.momentum, weight_decay=args.wd)
 
+# Horovod: (optional) compression algorithm.
+compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
+
 # Horovod: wrap optimizer with DistributedOptimizer.
-optimizer = hvd.DistributedOptimizer(
-    optimizer, named_parameters=model.named_parameters())
+optimizer = hvd.DistributedOptimizer(optimizer,
+                                     named_parameters=model.named_parameters(),
+                                     compression=compression)
+
+# Restore from a previous checkpoint, if initial_epoch is specified.
+# Horovod: restore on the first worker which will broadcast weights to other workers.
+if resume_from_epoch > 0 and hvd.rank() == 0:
+    filepath = args.checkpoint_format.format(epoch=resume_from_epoch)
+    checkpoint = torch.load(filepath)
+    model.load_state_dict(checkpoint['model'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+
+# Horovod: broadcast parameters & optimizer state.
+hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
 def train(epoch):
     model.train()
@@ -212,7 +225,12 @@ def accuracy(output, target):
 
 def save_checkpoint(epoch):
     if hvd.rank() == 0:
-        torch.save(model.state_dict(), args.checkpoint_format.format(epoch=epoch + 1))
+        filepath = args.checkpoint_format.format(epoch=epoch + 1)
+        state = {
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+        }
+        torch.save(state, filepath)
 
 
 # Horovod: average metrics from distributed training.
@@ -223,7 +241,7 @@ class Metric(object):
         self.n = torch.tensor(0.)
 
     def update(self, val):
-        self.sum += hvd.allreduce(val.cpu(), name=self.name)
+        self.sum += hvd.allreduce(val.detach().cpu(), name=self.name)
         self.n += 1
 
     @property

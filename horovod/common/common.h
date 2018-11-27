@@ -25,12 +25,14 @@ namespace horovod {
 namespace common {
 
 // Device ID used for CPU.
-#define CPU_DEVICE_ID -1
+#define CPU_DEVICE_ID (-1)
 
 // List of supported frameworks.
 enum Framework { TENSORFLOW, PYTORCH };
 
-enum StatusType { OK, UNKNOWN_ERROR, PRECONDITION_ERROR, ABORTED };
+enum StatusType { OK, UNKNOWN_ERROR, PRECONDITION_ERROR, ABORTED, INVALID_ARGUMENT };
+
+enum DeviceType { CPU, GPU };
 
 class Status {
 public:
@@ -39,6 +41,7 @@ public:
   static Status UnknownError(std::string message);
   static Status PreconditionError(std::string message);
   static Status Aborted(std::string message);
+  static Status InvalidArgument(std::string message);
   bool ok() const;
   StatusType type() const;
   const std::string& reason() const;
@@ -74,7 +77,7 @@ private:
 class ReadyEvent {
 public:
   virtual bool Ready() const = 0;
-  virtual ~ReadyEvent(){};
+  virtual ~ReadyEvent() = default;
 };
 
 class OpContext;
@@ -82,7 +85,7 @@ class OpContext;
 class PersistentBuffer {
 public:
   virtual const void* AccessData(std::shared_ptr<OpContext> context) const = 0;
-  virtual ~PersistentBuffer(){};
+  virtual ~PersistentBuffer() = default;
 };
 
 class Tensor {
@@ -91,7 +94,7 @@ public:
   virtual const TensorShape shape() const = 0;
   virtual const void* data() const = 0;
   virtual int64_t size() const = 0;
-  virtual ~Tensor(){};
+  virtual ~Tensor() = default;
 };
 
 class OpContext {
@@ -103,7 +106,7 @@ public:
   virtual Status AllocateOutput(TensorShape shape,
                                 std::shared_ptr<Tensor>* tensor) = 0;
   virtual Framework framework() const = 0;
-  virtual ~OpContext(){};
+  virtual ~OpContext() = default;
 };
 
 } // namespace common

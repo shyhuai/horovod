@@ -1,6 +1,6 @@
 # Horovod
 
-[![Build Status](https://travis-ci.org/uber/horovod.svg?branch=master)](https://travis-ci.org/uber/horovod) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Build Status](https://travis-ci.org/uber/horovod.svg?branch=master)](https://travis-ci.org/uber/horovod) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE) [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fuber%2Fhorovod.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fuber%2Fhorovod?ref=badge_shield)
 
 <p align="center"><img src="https://user-images.githubusercontent.com/16640218/34506318-84d0c06c-efe0-11e7-8831-0425772ed8f2.png" alt="Logo" width="200"/></p>
 
@@ -36,7 +36,7 @@ distributed Deep Learning fast and easy to use.
 The primary motivation for this project is to make it easy to take a single-GPU TensorFlow program and successfully train
 it on many GPUs faster. This has two aspects:
 
-1. How much modifications does one have to make to a program to make it distributed, and how easy is it to run it.
+1. How much modification does one have to make to a program to make it distributed, and how easy is it to run it.
 2. How much faster would it run in distributed mode?
 
 Internally at Uber we found the MPI model to be much more straightforward and require far less code changes than the
@@ -175,8 +175,9 @@ $ mpirun -np 16 \
 3. To run in Docker, see the [Horovod in Docker](docs/docker.md) page.
 
 4. To run in Kubernetes, see [Kubeflow](https://github.com/kubeflow/kubeflow/blob/master/kubeflow/openmpi/),
-[MPI Operator](https://github.com/kubeflow/mpi-operator/), and
-[Helm Chart](https://github.com/kubernetes/charts/tree/master/stable/horovod/).
+[MPI Operator](https://github.com/kubeflow/mpi-operator/), 
+[Helm Chart](https://github.com/kubernetes/charts/tree/master/stable/horovod/), and 
+[FfDL](https://github.com/IBM/FfDL/tree/master/etc/examples/horovod/).
 
 ## Keras
 
@@ -233,7 +234,6 @@ hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
 for epoch in range(100):
    for batch_idx, (data, target) in enumerate(train_loader):
-       data, target = Variable(data), Variable(target)
        optimizer.zero_grad()
        output = model(data)
        loss = F.nll_loss(output, target)
@@ -241,7 +241,7 @@ for epoch in range(100):
        optimizer.step()
        if batch_idx % args.log_interval == 0:
            print('Train Epoch: {} [{}/{}]\tLoss: {}'.format(
-               epoch, batch_idx * len(data), len(train_sampler), loss.data[0]))
+               epoch, batch_idx * len(data), len(train_sampler), loss.item()))
 ```
 
 **Note**: PyTorch support requires NCCL 2.2 or later. It also works with NCCL 2.1.15 if you are not using RoCE or InfiniBand.
@@ -253,8 +253,6 @@ provided that the MPI was built with multi-threading support.
 
 You can check for MPI multi-threading support by querying the `hvd.mpi_threads_supported()` function.
 
-**Note**: Make sure that MPI library will **NOT** re-initialize MPI.  For example:
-
 ```python
 import horovod.tensorflow as hvd
 
@@ -263,10 +261,6 @@ hvd.init()
 
 # Verify that MPI multi-threading is supported.
 assert hvd.mpi_threads_supported()
-
-# Make sure MPI is not re-initialized.
-import mpi4py.rc
-mpi4py.rc.initialize = False
 
 from mpi4py import MPI
 assert hvd.size() == MPI.COMM_WORLD.Get_size()
@@ -325,4 +319,4 @@ Retrieved from [https://eng.uber.com/horovod/](https://eng.uber.com/horovod/)
 
 The Horovod source code was based off the Baidu [tensorflow-allreduce](https://github.com/baidu-research/tensorflow-allreduce)
 repository written by Andrew Gibiansky and Joel Hestness. Their original work is described in the article
-[Bringing HPC Techniques to Deep Learning](http://research.baidu.com/bringing-hpc-techniques-deep-learning/).
+[Bringing HPC Techniques to Deep Learning](http://andrew.gibiansky.com/blog/machine-learning/baidu-allreduce/).

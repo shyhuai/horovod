@@ -1,4 +1,4 @@
-# Copyright 2017 Uber Technologies, Inc. All Rights Reserved.
+# Copyright 2018 Uber Technologies, Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,8 +13,15 @@
 # limitations under the License.
 # ==============================================================================
 
-import keras
-import keras.backend as K
+import tensorflow as tf
+
+from distutils.version import LooseVersion
+if LooseVersion(tf.__version__) >= LooseVersion("1.4.0"):
+    from tensorflow import keras
+    from tensorflow.python.keras import backend as K
+else:
+    from tensorflow.contrib import keras
+    from tensorflow.contrib.keras import backend as K
 
 from horovod.tensorflow import init
 from horovod.tensorflow import shutdown
@@ -25,8 +32,8 @@ from horovod.tensorflow import local_rank
 from horovod.tensorflow import mpi_threads_supported
 from horovod.tensorflow import Compression
 
-from horovod.keras import callbacks
 import horovod._keras as _impl
+from horovod.tensorflow.keras import callbacks
 
 
 def DistributedOptimizer(optimizer, name=None,
@@ -52,8 +59,7 @@ def DistributedOptimizer(optimizer, name=None,
         sparse_as_dense: Treat all sparse gradients as dense tensors.  This can
                          help improve performance and memory utilization if
                          the original sparse gradient has high density.
-                         Defaults to false.
-    """
+                         Defaults to false.    """
     return _impl.create_distributed_optimizer(keras, optimizer, name,
                                               device_dense, device_sparse, compression,
                                               sparse_as_dense)
@@ -146,3 +152,4 @@ def load_model(filepath, custom_optimizers=None, custom_objects=None, compressio
     def wrap_optimizer(cls):
         return lambda **kwargs: DistributedOptimizer(cls(**kwargs), compression=compression)
     return _impl.load_model(keras, wrap_optimizer, filepath, custom_optimizers, custom_objects)
+
