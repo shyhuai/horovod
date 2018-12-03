@@ -112,6 +112,7 @@ class _DistributedOptimizer(torch.optim.Optimizer):
         self._handles = {}
         self._grad_accs = []
         self._requires_update = set()
+        self.local = False
         if size() > 1:
             self._register_hooks()
 
@@ -161,11 +162,12 @@ class _DistributedOptimizer(torch.optim.Optimizer):
         def hook(*ignore):
             assert p not in self._handles
             assert not p.grad.requires_grad
-            if self._sparse:
-                self._handles[p] = self._sparse_allreduce(p)
-            else:
-                handle, ctx = self._allreduce_grad_async(p)
-                self._handles[p] = (handle, ctx)
+            if not self.local:
+                if self._sparse:
+                    self._handles[p] = self._sparse_allreduce(p)
+                else:
+                    handle, ctx = self._allreduce_grad_async(p)
+                    self._handles[p] = (handle, ctx)
         return hook
 
     def _init_sparse_space(self):
@@ -214,7 +216,8 @@ class _DistributedOptimizer(torch.optim.Optimizer):
         self._handles.clear()
 
     def step(self, closure=None):
-        self.synchronize()
+        if not self.local:
+            self.synchronize()
         return super(self.__class__, self).step(closure)
 
 

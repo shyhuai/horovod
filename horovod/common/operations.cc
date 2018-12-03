@@ -164,6 +164,23 @@ struct HorovodGlobalState {
                      std::shared_ptr<PersistentBuffer>>
       tensor_fusion_buffers;
 
+  // Memory buffers for Sparse allreduce. They are allocated in the CPU side.
+  // For a specific size of tensor, there are following memories for different 
+  // purpose usage:
+  // 'nnzs': num_workers, int32
+  // 'values': num_workers*numel, tensor.dtype 
+  // 'indexes': num_workers*numel, int32 
+  // 'displ': num_workers, int32 
+  std::unordered_map<std::string,
+                     void *>
+      sparseallreduce_buffers;
+
+  std::unordered_map<std::string,
+                    std::shared_ptr<PersistentBuffer>>
+      residual_tensors;
+
+
+
   // Whether MPI_Init has been completed on the background thread.
   std::atomic_bool initialization_done {false};
 
@@ -199,6 +216,9 @@ struct HorovodGlobalState {
 
   // Do hierarchical allreduce with MPI + NCCL.
   bool hierarchical_allreduce = false;
+
+  // Do sparse allreduce with MPI without NCCL
+  bool sparse_allreduce = false;
 
 // The CUDA stream used for data transfers and within-allreduce operations.
 // A naive implementation would use the TensorFlow StreamExecutor CUDA
@@ -506,7 +526,7 @@ MPIResponse ConstructMPIResponse(std::unique_ptr<MessageTable>& message_table,
     response.set_response_type(MPIResponse::ALLREDUCE);
   } else if (message_type == MPIRequest::BROADCAST) {
     response.set_response_type(MPIResponse::BROADCAST);
-  }
+  } 
   response.set_devices(devices);
 
   // Clear all queued up requests for this name. They are now taken care of
@@ -732,6 +752,7 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       // Clear the tensor table of this tensor and its callbacks; the rest of
       // this function takes care of it.
       tensor_table.erase(iter);
+
     }
   }
 
@@ -739,6 +760,30 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
   for (auto& e : entries) {
     timeline.Start(e.tensor_name, response.response_type());
   }
+
+  // Lazily allocate buffer for SPARSEALLREDUCE and keep it
+  // forever per device.
+  if (horovod_global.sparse_allreduce) {
+    int64_t total_gradient_size = 0;
+    for (auto& e: entries) {
+          // Allocate buffers if the buffer is empty
+      void *buffer = horovod_global.sparseallreduce_buffers[e.tensor_name];
+      int64_t total_dimension_size = e.tensor->shape().num_elements();
+      if (buffer == nullptr) {
+        size_t buffer_size = sizeof(int32_t) * (horovod_global.size * 2 + \ // nnzs, displ
+                             horovod_global.size * total_dimension_size) + \ //indexes
+                             e.tensor->size(); // values
+        horovod_global.sparseallreduce_buffers[e.tensor_name] = (void *)malloc(buffer_size);
+        total_gradient_size += total_dimension_size;
+        horovod_global.residual_tensor_offsets[e.tensor_name] = total_dimension_size;
+      }
+      void *residual = horovod_global.residual_tensors[e.tensor_name];
+      if (residual == nullptr) {
+        Status status = first_entry.context->AllocatePersistent(total_dimension_size, &residual);
+      }
+    }
+  }
+
 
   if (entries.size() > 1) {
     auto first_entry = entries[0];
@@ -1175,6 +1220,17 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
             RECORD_EVENT(entries, event_queue, NCCL_BCAST, stream)
           }
         }
+      } else if (horovod_global.sparse_allreduce) {
+        auto& e = entries[0];
+
+        uint8_t *sparse_buffer = horovod_global.sparseallreduce_buffers[e.tensor_name];
+        int32_t *nnzs = (int32_t *)(sparse_buffer);
+        int32_t *displ= (int32_t *)(sparse_buffer + horovod_global.size * sizeof(int32_t));
+        int32_t *indexes = (int32_t *)(sparse_buffer + horovod_global.size * 2 * sizeof(int32_t));
+        void *values = (void *)(sparse_buffer + horovod_global.size * 2 * sizeof(int32_t)+ e.tensor->size());
+        auto& residual = horovod_global.residual_tensors[e.tensor_name];
+        void *residual_data = const_cast<void*>(residual->AccessData(e.context));
+
       } else {
         NCCL_CHECK(entries, "ncclAllReduce",
                    ncclAllReduce(fused_input_data, buffer_data,
@@ -1581,6 +1637,15 @@ void BackgroundThreadLoop(HorovodGlobalState& state) {
       (size != local_size)) {
     state.hierarchical_allreduce = true;
   }
+
+  auto horovod_sparse_allreduce =
+      std::getenv(HOROVOD_SPARSE_ALLREDUCE);
+  if (horovod_sparse_allreduce != nullptr &&
+      std::strtol(horovod_sparse_allreduce, nullptr, 10) > 0 &&
+      (size != local_size)) {
+    state.sparse_allreduce = true;
+  }
+
 
   // Issue warning if hierarchical allreduce is enabled in heterogeneous cluster
   if (is_coordinator && state.hierarchical_allreduce && !state.is_homogeneous) {

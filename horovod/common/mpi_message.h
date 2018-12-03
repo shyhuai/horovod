@@ -43,7 +43,7 @@ const std::string& MPIDataType_Name(MPIDataType value);
 // the rank wants to do and the tensor that it wants to apply the operation to.
 class MPIRequest {
 public:
-  enum RequestType { ALLREDUCE = 0, ALLGATHER = 1, BROADCAST = 2 };
+  enum RequestType { ALLREDUCE = 0, ALLGATHER = 1, BROADCAST = 2};
 
   static const std::string& RequestType_Name(RequestType value);
 
@@ -114,7 +114,7 @@ public:
     ALLREDUCE = 0,
     ALLGATHER = 1,
     BROADCAST = 2,
-    ERROR = 3
+    ERROR = 4 
   };
 
   static const std::string& ResponseType_Name(ResponseType value);
