@@ -128,8 +128,8 @@ class _DistributedOptimizer(torch.optim.Optimizer):
                     grad_acc.register_hook(self._make_hook(p))
                     self._grad_accs.append(grad_acc)
 
-        if self._sparse:
-            self._init_sparse_space()
+        #if self._sparse:
+        #    self._init_sparse_space()
 
     def _allreduce_grad_async(self, p):
         name = self._parameter_names.get(p)
@@ -138,24 +138,17 @@ class _DistributedOptimizer(torch.optim.Optimizer):
         handle = allreduce_async_(tensor_compressed, average=True, name=name)
         return handle, ctx
 
-    def _sparse_allreduce(self, p):
+    def _sparse_allreduce_async(self, p):
         name = self._parameter_names.get(p)
-        #print('[rank:%d] sparse allreduce: %s' %(rank(), name))
-        tensor = p.grad.data
-        tensor_compressed, ctx = self._compression.compress(tensor, name)
-        if tensor_compressed.is_cuda:
-            ny = tensor_compressed.cpu().numpy()
-        else:
-            ny = tensor_compressed.numpy()
-        shape = ny.shape
-        result = sparse_allreduce(ny.flatten(), self._sparse_storage[p])
-        result = result.reshape(shape)
-        r = torch.from_numpy(result)
-        if tensor_compressed.is_cuda:
-            r = r.cuda(tensor.device, non_blocking=False)
-        #if rank() == 0:
-            #print('[rank:%d] == name:%s, norm: %s' %(rank(), name, float(r.norm())))
-        return r 
+        tensor = p.grad.data.view(-1)
+        #print('name: ', name, ' input shape: ', tensor.shape)
+        ratio = 0.5
+        tensor_compressed, ctx = self._compression.compress(tensor, name, ratio=ratio)
+        indexes = ctx
+        selected_values = tensor_compressed[indexes]
+        communicated_tensor = torch.cat((selected_values, indexes.float()), 0)
+        handle = allgather_async(communicated_tensor, name)
+        return handle, ctx 
 
 
     def _make_hook(self, p):
@@ -164,7 +157,8 @@ class _DistributedOptimizer(torch.optim.Optimizer):
             assert not p.grad.requires_grad
             if not self.local:
                 if self._sparse:
-                    self._handles[p] = self._sparse_allreduce(p)
+                    handle, ctx = self._sparse_allreduce_async(p)
+                    self._handles[p] = (handle, ctx)
                 else:
                     handle, ctx = self._allreduce_grad_async(p)
                     self._handles[p] = (handle, ctx)
@@ -196,18 +190,30 @@ class _DistributedOptimizer(torch.optim.Optimizer):
         missing_p = self._requires_update - set(self._handles.keys())
         for p in missing_p:
             if self._sparse:
-                self._handles[p] = self._sparse_allreduce(p)
+                handle, ctx = self._sparse_allreduce_async(p)
+                self._handles[p] = (handle, ctx)
             else:
                 handle, ctx = self._allreduce_grad_async(p)
                 self._handles[p] = (handle, ctx)
 
+        num_of_workers = size()
         for p, value in self._handles.items():
             name = self._parameter_names.get(p)
             if self._sparse:
-                output = value
-                #if rank() == 0:
-                    #print('[rank:%d] -- name:%s, norm: %s' %(rank(), name, float(output.norm())))
-                p.grad.data.set_(self._compression.decompress(output, None, name=name))
+                handle, ctx = value
+                output = synchronize(handle)
+                new_grad = p.grad.data.view(-1).fill_(0.0)
+                numel = output.numel()
+                real_num_values = numel//num_of_workers
+                for i in range(num_of_workers):
+                    values_and_indexes = output.data[i*real_num_values:(i+1)*real_num_values]
+                    values = values_and_indexes[0:real_num_values//2]
+                    indexes = values_and_indexes[real_num_values//2:].long()
+                    new_grad[indexes] = values
+                new_grad = new_grad.reshape(p.grad.data.shape)
+                #print('name: ', name, ' output shape: ', output.shape)
+                #p.grad.data.set_(self._compression.decompress(output, None, name=name))
+                p.grad.data.set_(new_grad)
             else:
                 handle, ctx = value
                 output = synchronize(handle)

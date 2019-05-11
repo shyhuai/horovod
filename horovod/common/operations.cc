@@ -763,26 +763,26 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
   // Lazily allocate buffer for SPARSEALLREDUCE and keep it
   // forever per device.
-  if (horovod_global.sparse_allreduce) {
-    int64_t total_gradient_size = 0;
-    for (auto& e: entries) {
-          // Allocate buffers if the buffer is empty
-      void *buffer = horovod_global.sparseallreduce_buffers[e.tensor_name];
-      int64_t total_dimension_size = e.tensor->shape().num_elements();
-      if (buffer == nullptr) {
-        size_t buffer_size = sizeof(int32_t) * (horovod_global.size * 2 + \ // nnzs, displ
-                             horovod_global.size * total_dimension_size) + \ //indexes
-                             e.tensor->size(); // values
-        horovod_global.sparseallreduce_buffers[e.tensor_name] = (void *)malloc(buffer_size);
-        total_gradient_size += total_dimension_size;
-        horovod_global.residual_tensor_offsets[e.tensor_name] = total_dimension_size;
-      }
-      void *residual = horovod_global.residual_tensors[e.tensor_name];
-      if (residual == nullptr) {
-        Status status = first_entry.context->AllocatePersistent(total_dimension_size, &residual);
-      }
-    }
-  }
+  //if (horovod_global.sparse_allreduce) {
+  //  int64_t total_gradient_size = 0;
+  //  for (auto& e: entries) {
+  //        // Allocate buffers if the buffer is empty
+  //    void *buffer = horovod_global.sparseallreduce_buffers[e.tensor_name];
+  //    int64_t total_dimension_size = e.tensor->shape().num_elements();
+  //    if (buffer == nullptr) {
+  //      size_t buffer_size = sizeof(int32_t) * (horovod_global.size * 2 + \ 
+  //                           horovod_global.size * total_dimension_size) + \ 
+  //                           e.tensor->size(); 
+  //      horovod_global.sparseallreduce_buffers[e.tensor_name] = (void *)malloc(buffer_size);
+  //      total_gradient_size += total_dimension_size;
+  //      horovod_global.residual_tensor_offsets[e.tensor_name] = total_dimension_size;
+  //    }
+  //    void *residual = horovod_global.residual_tensors[e.tensor_name];
+  //    if (residual == nullptr) {
+  //      Status status = first_entry.context->AllocatePersistent(total_dimension_size, &residual);
+  //    }
+  //  }
+  //}
 
 
   if (entries.size() > 1) {
@@ -1220,18 +1220,20 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
             RECORD_EVENT(entries, event_queue, NCCL_BCAST, stream)
           }
         }
-      } else if (horovod_global.sparse_allreduce) {
-        auto& e = entries[0];
+      } 
+      //else if (horovod_global.sparse_allreduce) {
+      //  auto& e = entries[0];
 
-        uint8_t *sparse_buffer = horovod_global.sparseallreduce_buffers[e.tensor_name];
-        int32_t *nnzs = (int32_t *)(sparse_buffer);
-        int32_t *displ= (int32_t *)(sparse_buffer + horovod_global.size * sizeof(int32_t));
-        int32_t *indexes = (int32_t *)(sparse_buffer + horovod_global.size * 2 * sizeof(int32_t));
-        void *values = (void *)(sparse_buffer + horovod_global.size * 2 * sizeof(int32_t)+ e.tensor->size());
-        auto& residual = horovod_global.residual_tensors[e.tensor_name];
-        void *residual_data = const_cast<void*>(residual->AccessData(e.context));
+      //  uint8_t *sparse_buffer = horovod_global.sparseallreduce_buffers[e.tensor_name];
+      //  int32_t *nnzs = (int32_t *)(sparse_buffer);
+      //  int32_t *displ= (int32_t *)(sparse_buffer + horovod_global.size * sizeof(int32_t));
+      //  int32_t *indexes = (int32_t *)(sparse_buffer + horovod_global.size * 2 * sizeof(int32_t));
+      //  void *values = (void *)(sparse_buffer + horovod_global.size * 2 * sizeof(int32_t)+ e.tensor->size());
+      //  auto& residual = horovod_global.residual_tensors[e.tensor_name];
+      //  void *residual_data = const_cast<void*>(residual->AccessData(e.context));
 
-      } else {
+      //} 
+      else {
         NCCL_CHECK(entries, "ncclAllReduce",
                    ncclAllReduce(fused_input_data, buffer_data,
                                  (size_t)num_elements,
